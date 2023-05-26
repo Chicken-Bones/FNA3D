@@ -32,7 +32,12 @@
 #include "FNA3D_Driver_D3D11_shaders.h"
 
 #include <SDL.h>
+#ifdef FNA3D_DXVK_NATIVE
+#define DXVK_SDL2_IMPL
+#include "dxvk_sdl2.h"
+#else
 #include <SDL_syswm.h>
+#endif /* FNA3D_DXVK_NATIVE */
 
 /* D3D11 Libraries */
 
@@ -4845,6 +4850,9 @@ static uint8_t D3D11_PrepareWindowAttributes(uint32_t *flags)
 		D3D_FEATURE_LEVEL_10_1,
 		D3D_FEATURE_LEVEL_10_0
 	};
+	void* dxgi_dll;
+	void* factory; /* IDXGIFactory1 or IDXGIFactory2 */
+	IDXGIAdapter1 *adapter;
 	HRESULT res;
 
 #ifdef FNA3D_DXVK_NATIVE
@@ -4882,8 +4890,32 @@ static uint8_t D3D11_PrepareWindowAttributes(uint32_t *flags)
 		return 0;
 	}
 
+	res = D3D11_PLATFORM_CreateDXGIFactory(
+		&dxgi_dll,
+		&factory
+	);
+	if (FAILED(res))
+	{
+		D3D11_PLATFORM_UnloadDXGI(dxgi_dll);
+		SDL_UnloadObject(module);
+		return 0;
+	}
+#ifdef FNA3D_DXVK_NATIVE
+	res = dxvkInitWSI(factory); /* Defined by dxvk_sdl2.h */
+	if (FAILED(res))
+	{
+		IUnknown_Release((IUnknown*) factory);
+		D3D11_PLATFORM_UnloadDXGI(dxgi_dll);
+		SDL_UnloadObject(module);
+	}
+#endif /* FNA3D_DXVK_NATIVE */
+	D3D11_PLATFORM_GetDefaultAdapter(
+		factory,
+		&adapter
+	);
+
 	res = D3D11CreateDeviceFunc(
-		NULL,
+		(IDXGIAdapter*) adapter,
 		D3D_DRIVER_TYPE_HARDWARE,
 		NULL,
 		D3D11_CREATE_DEVICE_BGRA_SUPPORT,
@@ -4899,7 +4931,7 @@ static uint8_t D3D11_PrepareWindowAttributes(uint32_t *flags)
 	{
 		FNA3D_LogWarn("Creating device with feature level 11_1 failed. Lowering feature level.", res);
 		res = D3D11CreateDeviceFunc(
-			NULL,
+			(IDXGIAdapter*) adapter,
 			D3D_DRIVER_TYPE_HARDWARE,
 			NULL,
 			D3D11_CREATE_DEVICE_BGRA_SUPPORT,
@@ -4912,6 +4944,8 @@ static uint8_t D3D11_PrepareWindowAttributes(uint32_t *flags)
 		);
 	}
 
+	IUnknown_Release((IUnknown*) factory);
+	D3D11_PLATFORM_UnloadDXGI(dxgi_dll);
 	D3D11_PLATFORM_UnloadD3D11(module);
 
 	if (FAILED(res))
@@ -4922,6 +4956,10 @@ static uint8_t D3D11_PrepareWindowAttributes(uint32_t *flags)
 
 	/* No window flags required */
 	SDL_SetHint(SDL_HINT_VIDEO_EXTERNAL_CONTEXT, "1");
+#ifdef FNA3D_DXVK_NATIVE
+	/* ... unless this is DXVK */
+	*flags = SDL_WINDOW_VULKAN;
+#endif /* FNA3D_DXVK_NATIVE */
 	return 1;
 }
 
@@ -5120,6 +5158,10 @@ static FNA3D_Device* D3D11_CreateDevice(
 		&renderer->factory
 	);
 	ERROR_CHECK_RETURN("Could not create DXGIFactory", NULL)
+#ifdef FNA3D_DXVK_NATIVE
+	res = dxvkInitWSI(renderer->factory); /* Defined by dxvk_sdl2.h */
+	ERROR_CHECK_RETURN("Could not initialize DXVK WSI", NULL)
+#endif /* FNA3D_DXVK_NATIVE */
 	D3D11_PLATFORM_GetDefaultAdapter(
 		renderer->factory,
 		&renderer->adapter
@@ -5552,6 +5594,21 @@ static void ResolveSwapChainModeDescription(
 	DXGI_MODE_DESC* modeDescription,
 	DXGI_MODE_DESC* swapChainDescription
 ) {
+#ifdef FNA3D_DXVK_NATIVE
+	/* FIXME: We could do SDL_GetWindowDisplayIndex here, but eh */
+	IDXGIOutput *output;
+	IDXGIAdapter_EnumOutputs(
+		adapter,
+		0,
+		&output
+	);
+	IDXGIOutput_FindClosestMatchingMode(
+		output,
+		modeDescription,
+		swapChainDescription,
+		device
+	);
+#else
 	HMONITOR monitor;
 	int iAdapter = 0, iOutput;
 	IDXGIAdapter1* pAdapter;
@@ -5579,6 +5636,7 @@ static void ResolveSwapChainModeDescription(
 		}
 		IDXGIAdapter1_Release(pAdapter);
 	}
+#endif /* FNA3D_DXVK_NATIVE */
 }
 
 static void D3D11_PLATFORM_CreateSwapChain(
@@ -5594,10 +5652,14 @@ static void D3D11_PLATFORM_CreateSwapChain(
 	HWND dxgiHandle;
 	HRESULT res;
 
+#ifdef FNA3D_DXVK_NATIVE
+	dxgiHandle = (HWND) windowHandle;
+#else
 	SDL_SysWMinfo info;
 	SDL_VERSION(&info.version);
 	SDL_GetWindowWMInfo((SDL_Window*) windowHandle, &info);
 	dxgiHandle = info.info.win.window;
+#endif /* FNA3D_DXVK_NATIVE */
 
 	/* Initialize swapchain buffer descriptor */
 	swapchainBufferDesc.Width = 0;
