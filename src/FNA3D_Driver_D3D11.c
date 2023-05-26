@@ -32,11 +32,7 @@
 #include "FNA3D_Driver_D3D11_shaders.h"
 
 #include <SDL.h>
-#ifdef FNA3D_DXVK_NATIVE
-#include <SDL_vulkan.h>
-#else
 #include <SDL_syswm.h>
-#endif /* FNA3D_DXVK_NATIVE */
 
 /* D3D11 Libraries */
 
@@ -4926,39 +4922,12 @@ static uint8_t D3D11_PrepareWindowAttributes(uint32_t *flags)
 
 	/* No window flags required */
 	SDL_SetHint(SDL_HINT_VIDEO_EXTERNAL_CONTEXT, "1");
-#ifdef FNA3D_DXVK_NATIVE
-	/* ... unless this is DXVK */
-	*flags = SDL_WINDOW_VULKAN;
-#endif /* FNA3D_DXVK_NATIVE */
 	return 1;
 }
 
 static void D3D11_GetDrawableSize(void* window, int32_t *w, int32_t *h)
 {
-	/* TODO: Replace this blobulous mess with SDL_GetWindowSizeInPixels */
-
-#ifdef FNA3D_DXVK_NATIVE
-	SDL_Vulkan_GetDrawableSize((SDL_Window*) window, w, h);
-#elif defined(__WINRT__)
-	/* WinRT doesn't support DPI awareness the same way Win32 does */
-	SDL_GetWindowSize((SDL_Window*) window, w, h);
-#else
-	RECT rect;
-	SDL_SysWMinfo info;
-	SDL_VERSION(&info.version);
-	SDL_GetWindowWMInfo((SDL_Window*) window, &info);
-	SDL_assert(info.subsystem == SDL_SYSWM_WINDOWS);
-	if (GetClientRect(info.info.win.window, &rect))
-	{
-		*w = rect.right;
-		*h = rect.bottom;
-	}
-	else
-	{
-		*w = 0;
-		*h = 0;
-	}
-#endif /* FNA3D_DXVK_NATIVE */
+	SDL_GetWindowSizeInPixels((SDL_Window*) window, w, h);
 }
 
 static void D3D11_INTERNAL_InitializeFauxBackbufferResources(
@@ -5583,20 +5552,6 @@ static void ResolveSwapChainModeDescription(
 	DXGI_MODE_DESC* modeDescription,
 	DXGI_MODE_DESC* swapChainDescription
 ) {
-#ifdef FNA3D_DXVK_NATIVE
-	IDXGIOutput *output;
-	IDXGIAdapter_EnumOutputs(
-		adapter,
-		0,
-		&output
-	);
-	IDXGIOutput_FindClosestMatchingMode(
-		output,
-		modeDescription,
-		swapChainDescription,
-		device
-	);
-#else
 	HMONITOR monitor;
 	int iAdapter = 0, iOutput;
 	IDXGIAdapter1* pAdapter;
@@ -5624,7 +5579,6 @@ static void ResolveSwapChainModeDescription(
 		}
 		IDXGIAdapter1_Release(pAdapter);
 	}
-#endif /* FNA3D_DXVK_NATIVE */
 }
 
 static void D3D11_PLATFORM_CreateSwapChain(
@@ -5640,14 +5594,10 @@ static void D3D11_PLATFORM_CreateSwapChain(
 	HWND dxgiHandle;
 	HRESULT res;
 
-#ifdef FNA3D_DXVK_NATIVE
-	dxgiHandle = (HWND) windowHandle;
-#else
 	SDL_SysWMinfo info;
 	SDL_VERSION(&info.version);
 	SDL_GetWindowWMInfo((SDL_Window*) windowHandle, &info);
 	dxgiHandle = info.info.win.window;
-#endif /* FNA3D_DXVK_NATIVE */
 
 	/* Initialize swapchain buffer descriptor */
 	swapchainBufferDesc.Width = 0;
